@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NS Blowup Explorer — the machine-verified Navier–Stokes singularity</title>
+<style>
+  :root{
+    --bg:#04060c; --panel:#0a0f1c; --edge:#1b2740; --txt:#c8d6ee; --dim:#67799c;
+    --hot:#ff5533; --cool:#33aaff; --ok:#39d98a; --warn:#ffc233;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--txt); font:13px/1.45 "SF Mono",ui-monospace,Menlo,Consolas,monospace; overflow:hidden}
+  #app{display:grid; grid-template-columns:1fr 380px; grid-template-rows:52px 1fr; height:100vh; gap:8px; padding:8px}
+  header{grid-column:1/3; display:flex; align-items:center; gap:14px; background:var(--panel); border:1px solid var(--edge); border-radius:10px; padding:0 16px}
+  header h1{font-size:15px; letter-spacing:.5px; color:#fff}
+  header h1 b{color:var(--hot)}
+  .badge{font-size:10px; padding:3px 8px; border-radius:20px; border:1px solid var(--edge); color:var(--dim)}
+  .badge.hot{color:var(--hot); border-color:#4a2418}
+  .badge.ok{color:var(--ok); border-color:#1c4a35}
+  #stage{position:relative; background:var(--panel); border:1px solid var(--edge); border-radius:10px; overflow:hidden}
+  #stage canvas{display:block}
+  #side{display:flex; flex-direction:column; gap:8px; overflow-y:auto}
+  .card{background:var(--panel); border:1px solid var(--edge); border-radius:10px; padding:12px}
+  .card h3{font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--dim); margin-bottom:10px}
+  .metrics{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .metric{background:#070b14; border:1px solid var(--edge); border-radius:8px; padding:8px 10px}
+  .metric .k{font-size:10px; color:var(--dim)}
+  .metric .v{font-size:19px; color:#fff; font-weight:600}
+  .metric .v.hot{color:var(--hot)} .metric .v.ok{color:var(--ok)} .metric .v.warn{color:var(--warn)}
+  .metric .f{font-size:9px; color:var(--dim)}
+  .row{display:flex; gap:8px; align-items:center; margin-bottom:8px}
+  .row label{font-size:11px; color:var(--dim); flex:1}
+  button{background:#101a30; color:var(--txt); border:1px solid var(--edge); border-radius:7px; padding:6px 12px; font:inherit; font-size:11px; cursor:pointer}
+  button:hover{border-color:#33507e; color:#fff}
+  button.primary{background:#132344; border-color:#28487e; color:#fff}
+  input[type=range]{flex:2; accent-color:var(--cool); height:4px}
+  .toggle{display:flex; align-items:center; gap:8px; font-size:11px; color:var(--txt); margin-bottom:7px; cursor:pointer; user-select:none}
+  .toggle input{accent-color:var(--cool)}
+  .toggle .hint{color:var(--dim); font-size:10px}
+  #chart{width:100%; height:170px; background:#070b14; border:1px solid var(--edge); border-radius:8px}
+  #tau{font-size:11px; color:var(--dim); margin-top:6px}
+  #tau b{color:#fff; font-size:15px}
+  #contradiction{display:none; border:1px solid #5a2018; background:#170a08; color:#ffb4a0; border-radius:10px; padding:12px; font-size:11.5px}
+  #contradiction .stamp{color:var(--hot); font-size:13px; font-weight:700; margin-bottom:6px; letter-spacing:1px}
+  #explain{position:absolute; inset:0; background:rgba(4,6,12,.96); display:none; overflow-y:auto; padding:40px; z-index:10}
+  #explain .inner{max-width:760px; margin:0 auto}
+  #explain h2{color:#fff; font-size:18px; margin-bottom:6px}
+  #explain .sub{color:var(--dim); font-size:12px; margin-bottom:24px}
+  .step{border-left:2px solid var(--edge); padding:4px 0 14px 18px; margin-bottom:8px; position:relative}
+  .step::before{content:attr(data-n); position:absolute; left:-11px; top:2px; width:20px; height:20px; border-radius:50%; background:#132344; border:1px solid #28487e; color:#fff; font-size:10px; display:flex; align-items:center; justify-content:center}
+  .step h4{color:#fff; font-size:13px; margin-bottom:4px}
+  .step p{color:var(--dim); font-size:12px}
+  .step p b{color:var(--txt)} .step p code{color:var(--cool); font-size:11px}
+  #closeExplain{position:absolute; top:16px; right:24px}
+  footer{grid-column:1/3; display:flex; gap:16px; align-items:center; font-size:10px; color:var(--dim); padding:0 4px}
+  footer a{color:#4d79c9; text-decoration:none}
+  #status{position:absolute; top:10px; left:12px; font-size:11px; color:var(--dim); pointer-events:none; z-index:5}
+  #status b{color:#fff}
+  #forceFlash{position:absolute; top:34px; left:12px; font-size:11px; color:var(--warn); pointer-events:none; z-index:5; opacity:0; transition:opacity .3s}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>NS <b>BLOWUP</b> EXPLORER</h1>
+    <span class="badge hot">MILLENNIUM PROBLEM (C) — SOLVED</span>
+    <span class="badge ok">LEAN-VERIFIED · 641,332 LINES · 0 SORRY</span>
+    <span style="flex:1"></span>
+    <button class="primary" id="btnExplain">Explain the theorem</button>
+  </header>
+
+  <div id="stage">
+    <div id="status">t = <b id="tNow">0.000</b> &nbsp; τ = <b id="tauNow">1.000</b> &nbsp; state: <b id="stateNow">AT REST</b></div>
+    <div id="forceFlash">FORCE f APPLIED — collapse engaged</div>
+    <div id="explain">
+      <button id="closeExplain">✕ close</button>
+      <div class="inner">
+        <h2>How the constructed flow blows up</h2>
+        <div class="sub">From OpenAI, “Finite time blowup for Navier–Stokes” (2026) — machine-verified in Lean 4</div>
+        <div class="step" data-n="1"><h4>The fluid starts from absolute rest</h4><p><b>u(x,0) = 0.</b> Nothing moves. No initial “kick” — the whole event is driven by an external force. (This is why the theorem uses alternatives (C)/(D) of the Clay statement, which permit a smooth force.)</p></div>
+        <div class="step" data-n="2"><h4>A tame force is switched on</h4><p><b>f ∈ C<sup>∞</sup><sub>c</sub>(ℝ³×(0,∞))</b> — smooth, compactly supported in space, and its support lies strictly in positive time. It is a time-limited “control” that begins and ends cleanly. Toggle it off in the sim: <b>no force, no motion</b> — the fluid simply stays at rest.</p></div>
+        <div class="step" data-n="3"><h4>Self-similar collapse</h4><p>With τ = 1−t: core radius <code>ℓ_r ~ τ^½</code>, half-length <code>ℓ_z ~ τ^(½−h)</code> (slendering column), swirl <code>u_θ ~ τ^(−½−h)</code> → ∞. Radial inflow carries angular momentum <b>r·u_θ</b> inward — conservation spins the core up, exactly like ice skaters pulling in their arms.</p></div>
+        <div class="step" data-n="4"><h4>Incompressibility forces axial outflow</h4><p>Fluid cannot pile up on the axis. The divergence-free constraint turns inflow into outflow through the top and bottom of the column (with a small asymmetry across the dividing layer at z = 0). The angular Reynolds number <code>Re_θ ~ τ^(−h)</code> → ∞: the fluid makes more and more turns per diffusion time.</p></div>
+        <div class="step" data-n="5"><h4>Waves cancel the annulus residual</h4><p>Between the collapsing core and the calm exterior lies an annulus with an unbounded momentum residual. Oscillatory pulses (convex-integration / h-principle, Buckmaster–Vicol style), iterated at <b>every order</b> (the 166-page, 641K-line construction), cancel it — leaving a force that stays smooth through t = 1.</p></div>
+        <div class="step" data-n="6"><h4>Energy bounded, velocity infinite, no escape</h4><p>Total energy <code>∫|u|² dx &lt; ∞</code> for all t (core energy even ~ τ^(½−3h) → 0), but <code>‖u‖_L∞ ~ τ^(−½−h) → ∞</code> at t = 1. Any global smooth finite-energy solution would have to coincide with this flow on [0,1) (comparison, §10) and then fail to extend. <b>No global solution exists. ∎</b></p></div>
+        <p class="sub" style="margin-top:18px">This visualization uses the paper’s exact scaling exponents; the cross-section shape is a representative smooth profile of the Theorem 4.6 construction. The theorem requires h &lt; 0.01 — the slider lets you push h higher so the slendering is visible.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="side">
+    <div class="card">
+      <h3>Playback</h3>
+      <div class="row">
+        <button class="primary" id="btnPlay" style="width:74px">❚❚ pause</button>
+        <button id="btnReset">restart</button>
+        <button id="btnReplay">⟲ replay</button>
+      </div>
+      <div class="row"><label>time law</label>
+        <button id="tmLog" style="width:70px">log τ</button>
+        <button id="tmLin" style="width:70px">linear</button>
+      </div>
+      <div class="row"><label>speed</label><input type="range" id="speed" min="0.2" max="4" step="0.1" value="1"></div>
+      <div class="row"><label>scrub τ (log)</label><input type="range" id="scrub" min="0" max="1000" step="1" value="0"></div>
+    </div>
+
+    <div class="card">
+      <h3>Model</h3>
+      <label class="toggle"><input type="checkbox" id="forceOn" checked> force f applied <span class="hint">off → fluid stays at rest (zero data)</span></label>
+      <div class="row"><label>h &nbsp;<span id="hVal" style="color:#fff">0.05</span> <span class="hint" id="hRegime">(exaggerated)</span></label><input type="range" id="hSlide" min="0.001" max="0.5" step="0.001" value="0.05"></div>
+      <label class="toggle"><input type="checkbox" id="showStreaks" checked> velocity streaks</label>
+      <label class="toggle"><input type="checkbox" id="showAnnulus"> pulse annulus <span class="hint">where the waves cancel the residual</span></label>
+      <label class="toggle"><input type="checkbox" id="showCore" checked> core envelope <span class="hint">ℓ_r, ℓ_z</span></label>
+      <label class="toggle"><input type="checkbox" id="showBox" checked> support K <span class="hint">flow stays compact</span></label>
+    </div>
+
+    <div class="card">
+      <h3>Live metrics (log–log law of the collapse)</h3>
+      <div class="metrics">
+        <div class="metric"><div class="k">‖u‖<sub>L∞</sub> peak velocity</div><div class="v hot" id="mLinf">1.0×</div><div class="f">~ τ^(−½−h) → ∞</div></div>
+        <div class="metric"><div class="k">total kinetic energy</div><div class="v ok" id="mEnergy">1.0</div><div class="f">bounded — the theorem</div></div>
+        <div class="metric"><div class="k">core radius ℓ<sub>r</sub></div><div class="v" id="mR">0.50</div><div class="f">~ τ^½</div></div>
+        <div class="metric"><div class="k">core half-length ℓ<sub>z</sub></div><div class="v" id="mL">1.00</div><div class="f">~ τ^(½−h)</div></div>
+        <div class="metric"><div class="k">Re<sub>θ</sub> angular</div><div class="v warn" id="mRe">1.0×</div><div class="f">~ τ^(−h) → ∞</div></div>
+        <div class="metric"><div class="k">core energy</div><div class="v" id="mCE">1.0</div><div class="f">~ τ^(½−3h) → 0</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>The signature plot — every quantity is a straight line in log τ</h3>
+      <canvas id="chart" width="352" height="170"></canvas>
+      <div id="tau">τ = <b id="tauChart">1.000</b></div>
+    </div>
+
+    <div id="contradiction">
+      <div class="stamp">∎ CONTRADICTION AT t = 1</div>
+      ‖u‖<sub>L∞</sub> = τ^(−½−ʰ) → <b>∞</b> while total energy stayed <b>bounded</b>. Any global smooth finite-energy solution would coincide with this flow on [0,1) — and cannot extend. <b>No global solution exists.</b> (comparison argument, §10)
+    </div>
+  </div>
+
+  <footer>
+    <span>Source: OpenAI, “Finite time blowup for Navier–Stokes” (2026) · Theorem 1.1 = Clay alternatives (C)+(D)</span>
+    <span>Formalization: <a href="https://github.com/openai/NavierStokesAndEuler">github.com/openai/NavierStokesAndEuler</a> · Lean 4.34.0-rc2 · verified: 11,424/11,424 jobs, 0 errors</span>
+    <span style="flex:1"></span>
+    <span>cross-section shape representative; exponents exact</span>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+// ---------------- parameters (paper §3.1) ----------------
+const H_DEFAULT = 0.05;                 // exaggerated for visibility (theorem: h < 0.01)
+let h = H_DEFAULT;
+const R0 = 0.50, L0 = 1.00;             // core radius / half-length at t_on
+const T_ON = 0.30;                      // force switch-on time
+const TAU_MIN = 1e-4;
+const TAU_ON = 1 - T_ON;
+const BOX_R = 0.85, BOX_Z = 1.30;       // fixed compact support K
+
+// ---------------- state ----------------
+let t = 0, playing = true, timeMode = "log", speed = 1;
+let forceOn = true, forceWasOff = false;
+
+// ---------------- three.js setup ----------------
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04060c);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+camera.position.set(2.6, 1.15, 3.1);
+camera.lookAt(0, 0, 0);
+
+// orbit (simple drag)
+let dragging = false, px = 0, py = 0, theta = 0.85, phi = 1.18, camR = 4.1;
+function placeCamera(){
+  camera.position.set(camR*Math.sin(phi)*Math.cos(theta), camR*Math.cos(phi), camR*Math.sin(phi)*Math.sin(theta));
+  camera.lookAt(0,0,0);
+}
+placeCamera();
+stage.addEventListener("mousedown", e=>{ if(e.target===renderer.domElement){dragging=true; px=e.clientX; py=e.clientY;} });
+window.addEventListener("mouseup", ()=>dragging=false);
+window.addEventListener("mousemove", e=>{
+  if(!dragging) return;
+  theta -= (e.clientX-px)*0.006; phi = Math.min(2.6, Math.max(0.35, phi-(e.clientY-py)*0.005));
+  px=e.clientX; py=e.clientY; placeCamera();
+});
+stage.addEventListener("wheel", e=>{ e.preventDefault(); camR = Math.min(9, Math.max(1.4, camR + e.deltaY*0.003)); placeCamera(); }, {passive:false});
+
+// ---------------- particles ----------------
+const N = 5000;
+const r_ = new Float32Array(N), th_ = new Float32Array(N), z_ = new Float32Array(N);
+const pos = new Float32Array(N*3), col = new Float32Array(N*3);
+const streakPos = new Float32Array(N*6), streakCol = new Float32Array(N*6);
+function seedParticle(i){
+  const a = Math.random()*2*Math.PI;
+  const rad = Math.sqrt(Math.random())*BOX_R*0.92;
+  r_[i] = Math.max(0.004, rad);
+  th_[i] = a;
+  z_[i] = (Math.random()*2-1)*BOX_Z*0.92;
+}
+for(let i=0;i<N;i++) seedParticle(i);
+
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+geo.setAttribute("color", new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+const pmat = new THREE.PointsMaterial({size:0.016, vertexColors:true, transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false});
+const points = new THREE.Points(geo, pmat);
+scene.add(points);
+
+const sgeo = new THREE.BufferGeometry();
+sgeo.setAttribute("position", new THREE.BufferAttribute(streakPos, 3).setUsage(THREE.DynamicDrawUsage));
+sgeo.setAttribute("color", new THREE.BufferAttribute(streakCol, 3).setUsage(THREE.DynamicDrawUsage));
+const smat = new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false});
+const streaks = new THREE.LineSegments(sgeo, smat);
+scene.add(streaks);
+
+// core envelope
+const coreMat = new THREE.MeshBasicMaterial({color:0x33aaff, wireframe:true, transparent:true, opacity:0.10});
+const core = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2, 20, 4, true), coreMat);
+scene.add(core);
+// pulse annulus
+const annMat = new THREE.MeshBasicMaterial({color:0xff9933, wireframe:true, transparent:true, opacity:0.16, side:THREE.DoubleSide});
+const ann = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 1.18, 1.9, 24, 3, true), annMat);
+ann.visible = false;
+scene.add(ann);
+// support box K
+const boxGeo = new THREE.BoxGeometry(2*BOX_R, 2*BOX_Z, 2*BOX_R);
+const box = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo), new THREE.LineBasicMaterial({color:0x8899bb, transparent:true, opacity:0.16}));
+scene.add(box);
+// axis hint
+const axis = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,-1.4,0), new THREE.Vector3(0,1.4,0)]),
+  new THREE.LineBasicMaterial({color:0x334466, transparent:true, opacity:0.35}));
+scene.add(axis);
+
+// ---------------- the self-similar velocity field (paper exponents) ----------------
+// s = velocity scale ~ tau^(-1/2-h); Rc ~ tau^1/2; Lc ~ tau^(1/2-h)
+function field(r, z, tau){
+  const q  = Math.pow(tau/TAU_ON, -0.5 - h);      // velocity scale
+  const Rc = R0 * Math.pow(tau/TAU_ON, 0.5);
+  const Lc = L0 * Math.pow(tau/TAU_ON, 0.5 - h);
+  const rho = r / Rc, zeta = z / Lc;
+  const g = Math.exp(1 - rho*rho);                 // radial shape (inflow weight, core-localized)
+  const swirl = rho * g;                           // ~ r on axis (smoothness), peak at rho=1
+  const cap = Math.exp(-zeta*zeta/1.4);            // fade near column ends
+  const uz = q * (zeta * g * cap * 0.9 + 0.06 * g * cap);           // axial outflow + slight bias
+  const ur = -(r/2) * (q/Lc) * g * cap;                       // divergence-free inflow ~ tau^(-1/2)
+  const uth = q * swirl * cap;
+  return {ur, uth, uz, q, Rc, Lc};
+}
+
+// color ramp: log speed -> cool -> hot
+function speedColor(logs, out, o){
+  // logs in [0, 3.5] -> blue -> cyan -> white -> orange -> red
+  const x = Math.min(1, Math.max(0, logs/3.5));
+  let r,g,b;
+  if(x<0.35){ const k=x/0.35; r=0.05+0.1*k; g=0.25+0.6*k; b=0.55+0.45*k; }
+  else if(x<0.6){ const k=(x-0.35)/0.25; r=0.15+0.75*k; g=0.85+0.15*k; b=1.0-0.25*k; }
+  else { const k=(x-0.6)/0.4; r=0.9+0.1*k; g=1.0-0.65*k; b=0.75-0.6*k; }
+  out[o]=r; out[o+1]=g; out[o+2]=b;
+}
+
+// ---------------- main loop ----------------
+const clock = new THREE.Clock();
+function fmt(v, hot){
+  if(!isFinite(v)) return "∞";
+  const a = Math.abs(v);
+  if(a>=1000) return v.toExponential(1);
+  if(a>=100) return v.toFixed(0);
+  if(a>=10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+function resize(){
+  const w = stage.clientWidth, ht = stage.clientHeight;
+  renderer.setSize(w, ht);
+  camera.aspect = w/ht; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize); resize();
+
+function step(dtReal){
+  // advance simulation time
+  if(playing && forceOn){
+    const tau = Math.max(1-t, TAU_MIN);
+    let t2;
+    if(timeMode === "log"){
+      if(t <= T_ON){ t2 = t + dtReal*speed*0.15; }   // rest phase: linear, visible
+      else {
+        const tau2 = Math.max(tau * Math.exp(-0.42*dtReal*speed), TAU_MIN*0.5);
+        t2 = 1 - tau2;
+      }
+    } else {
+      t2 = t + dtReal*speed*0.12;
+    }
+    if(t2 > 1 - TAU_MIN){ // reached the singularity: hold, then loop
+      t2 = 1 - TAU_MIN;
+      if(!step.holding){ step.holding = 0; }
+      step.holding += dtReal;
+      if(step.holding > 2.2){ t2 = 0; t = 0; step.holding = 0; }
+    }
+    t = t2;
+  }
+  const tau = Math.max(1-t, TAU_MIN);
+  const active = forceOn && t > T_ON;
+  const q = active ? Math.pow(tau/TAU_ON, -0.5 - h) : 1;
+  const Rc = active ? R0 * Math.pow(tau/TAU_ON, 0.5) : R0;
+  const Lc = active ? L0 * Math.pow(tau/TAU_ON, 0.5 - h) : L0;
+
+  const dt = Math.max(1-t, TAU_MIN) && active ? dtReal*0 : 0; // (advected below via sim dt)
+  const dtSim = active ? dtReal*0 : 0;
+
+  for(let i=0;i<N;i++){
+    let x = r_[i]*Math.cos(th_[i]), zv = z_[i], xx = r_[i]*Math.sin(th_[i]);
+    if(active){
+      const F = field(r_[i], zv, tau);
+      const dts = (t - step.tPrev) || 0;
+      const adv = Math.min(dts*1.0, 0.02);
+      const nr = r_[i] + F.ur*adv;
+      const ntheta = th_[i] + (F.uth/Math.max(r_[i],1e-4))*adv;
+      const nz = zv + F.uz*adv;
+      if(nr < Rc*0.015 || nr > BOX_R*1.05 || Math.abs(nz) > BOX_Z*1.05){ seedParticle(i); }
+      else { r_[i]=nr; th_[i]=ntheta; z_[i]=nz; }
+    }
+    const X = r_[i]*Math.cos(th_[i]), Zv = z_[i], Y = r_[i]*Math.sin(th_[i]);
+    pos[i*3]=X; pos[i*3+1]=Zv; pos[i*3+2]=Y;
+    let spd = 0;
+    if(active){
+      const F = field(r_[i], Zv, tau);
+      spd = Math.sqrt(F.ur*F.ur + F.uth*F.uth + F.uz*F.uz);
+      // streaks
+      const k = 0.055*Rc/Math.max(F.q,1e-9);
+      streakPos[i*6]=X; streakPos[i*6+1]=Zv; streakPos[i*6+2]=Y;
+      streakPos[i*6+3]=X+F.ur*k; streakPos[i*6+4]=Zv+F.uz*k; streakPos[i*6+5]=Y+ (F.uth/Math.max(r_[i],1e-4))*k*r_[i];
+    } else {
+      streakPos[i*6]=X; streakPos[i*6+1]=Zv; streakPos[i*6+2]=Y;
+      streakPos[i*6+3]=X; streakPos[i*6+4]=Zv; streakPos[i*6+5]=Y;
+    }
+    const logs = active ? Math.max(0, Math.log10(Math.max(spd,1e-6))) : 0;
+    speedColor(logs, col, i*3);
+    speedColor(logs, streakCol, i*6); speedColor(logs, streakCol, i*6+3);
+  }
+  step.tPrev = t;
+  geo.attributes.position.needsUpdate = true;
+  geo.attributes.color.needsUpdate = true;
+  sgeo.attributes.position.needsUpdate = true;
+  sgeo.attributes.color.needsUpdate = true;
+
+  core.scale.set(Rc, Lc, Rc);
+  core.visible = document.getElementById("showCore").checked && active;
+  ann.scale.set(Rc, Lc, Rc);
+  box.visible = document.getElementById("showBox").checked;
+  streaks.visible = document.getElementById("showStreaks").checked && active;
+
+  // metrics
+  document.getElementById("tNow").textContent = t.toFixed(3);
+  document.getElementById("tauNow").textContent = tau.toFixed(4);
+  document.getElementById("stateNow").textContent = active ? "COLLAPSING" : (forceOn && t<T_ON ? "AT REST — force pending" : "AT REST — no force");
+  document.getElementById("mLinf").textContent = active ? fmt(q) + "×" : "1";
+  document.getElementById("mEnergy").textContent = "≤ 1 (bounded)";
+  document.getElementById("mR").textContent = active ? Rc.toFixed(3) : R0.toFixed(2);
+  document.getElementById("mL").textContent = active ? Lc.toFixed(3) : L0.toFixed(2);
+  document.getElementById("mRe").textContent = active ? fmt(Math.pow(tau/TAU_ON, -h)) + "×" : "1";
+  document.getElementById("mCE").textContent = active ? fmt(Math.pow(tau/TAU_ON, 0.5-3*h)) : "1";
+  document.getElementById("tauChart").textContent = tau.toFixed(4);
+  document.getElementById("contradiction").style.display = (active && tau < 2e-3) ? "block" : "none";
+
+  drawChart(tau);
+  renderer.render(scene, camera);
+}
+step.tPrev = 0;
+
+// ---------------- chart ----------------
+const cv = document.getElementById("chart"), cx = cv.getContext("2d");
+function drawChart(tau){
+  const W = cv.width, H = cv.height, padL = 30, padB = 18, padT = 8, padR = 8;
+  cx.clearRect(0,0,W,H);
+  const x0 = 0, x1 = Math.log10(TAU_MIN/TAU_ON); // [0 .. -4]
+  const y1 = 4.2, y0 = -1.2;
+  const X = v => padL + (v - x0)/(x1 - x0)*(W - padL - padR);
+  const Y = v => H - padB - (v - y0)/(y1 - y0)*(H - padB - padT);
+  // grid
+  cx.strokeStyle = "#141d33"; cx.lineWidth = 1;
+  for(let gx=-4; gx<=0; gx++){ cx.beginPath(); cx.moveTo(X(gx), Y(y0)); cx.lineTo(X(gx), Y(y1)); cx.stroke(); }
+  for(let gy=-1; gy<=4; gy++){ cx.beginPath(); cx.moveTo(X(x0), Y(gy)); cx.lineTo(X(x1), Y(gy)); cx.stroke(); }
+  cx.fillStyle = "#67799c"; cx.font = "9px monospace";
+  for(let gx=-4; gx<=0; gx++){ cx.fillText("1e"+gx, X(gx)-8, H-5); }
+  cx.fillText("log scale", W-52, H-5);
+  // curves: [exponent, color, label]
+  const curves = [
+    [-0.5-h, "#ff5533", "‖u‖∞  (→ ∞)"],
+    [0.0,   "#39d98a", "total E  (bounded)"],
+    [0.5,   "#33aaff", "ℓr core radius"],
+    [0.5-h, "#7fb3ff", "ℓz half-length"],
+    [-h,    "#ffc233", "Reθ"],
+    [0.5-3*h,"#8888aa", "core energy (→ 0)"]
+  ];
+  for(const [m, c, lab] of curves){
+    cx.strokeStyle = c; cx.lineWidth = 1.4;
+    cx.beginPath();
+    for(let s=0; s<=40; s++){
+      const x = x0 + (x1-x0)*s/40;
+      cx.lineTo(X(x), Y(Math.min(y1, Math.max(y0, m*x))));
+    }
+    cx.stroke();
+  }
+  // cursor
+  const xc = X(Math.max(x1, Math.log10(tau/TAU_ON)));
+  cx.strokeStyle = "#ffffff55"; cx.setLineDash([3,3]);
+  cx.beginPath(); cx.moveTo(xc, Y(y0)); cx.lineTo(xc, Y(y1)); cx.stroke(); cx.setLineDash([]);
+  // legend
+  let ly = 14;
+  for(const [m, c, lab] of curves){
+    cx.fillStyle = c; cx.fillRect(padL, ly-6, 10, 2);
+    cx.fillStyle = "#c8d6ee"; cx.font = "9px monospace";
+    cx.fillText(lab, padL+15, ly);
+    ly += 12;
+  }
+}
+
+// ---------------- controls ----------------
+const $ = id => document.getElementById(id);
+$("btnPlay").onclick = ()=>{ playing = !playing; $("btnPlay").textContent = playing ? "❚❚ pause" : "▶ play"; };
+$("btnReset").onclick = ()=>{ t = 0; step.holding = 0; seedAll(); };
+$("btnReplay").onclick = ()=>{ t = 0; step.holding = 0; seedAll(); playing = true; $("btnPlay").textContent = "❚❚ pause"; };
+function seedAll(){ for(let i=0;i<N;i++) seedParticle(i); }
+$("tmLog").onclick = ()=>{ timeMode = "log"; $("tmLog").classList.add("primary"); $("tmLin").classList.remove("primary"); };
+$("tmLin").onclick = ()=>{ timeMode = "lin"; $("tmLin").classList.add("primary"); $("tmLog").classList.remove("primary"); };
+$("speed").oninput = e => speed = +e.target.value;
+$("scrub").oninput = e => { const f = e.target.value/1000; t = 1 - TAU_ON*Math.pow(TAU_MIN/TAU_ON, f); step.holding = 0; };
+$("hSlide").oninput = e => {
+  h = +e.target.value; $("hVal").textContent = h.toFixed(3);
+  $("hRegime").textContent = h < 0.01 ? "(theorem regime)" : "(exaggerated)";
+  $("tmLog").classList.add("primary"); $("tmLin").classList.remove("primary"); timeMode="log";
+};
+$("forceOn").onchange = e => {
+  forceOn = e.target.checked;
+  if(!forceOn){ t = 0; step.holding = 0; seedAll(); }
+  else { $("forceFlash").style.opacity = 1; setTimeout(()=>$("forceFlash").style.opacity = 0, 1800); }
+};
+$("showAnnulus").onchange = e => ann.visible = e.target.checked;
+$("btnExplain").onclick = ()=> $("explain").style.display = "block";
+$("closeExplain").onclick = ()=> $("explain").style.display = "none";
+$("tmLog").classList.add("primary");
+
+// ---------------- go ----------------
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  step(dt);
+}
+loop();
+</script>
+</body>
+</html>
