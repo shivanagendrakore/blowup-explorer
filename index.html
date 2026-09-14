@@ -264,10 +264,12 @@ function field(r, z, tau){
   return {ur, uth, uz, q, Rc, Lc};
 }
 
-// color ramp: log speed -> cool -> hot
+// color ramp: log speed -> cool -> hot. Top = max speed reachable at tau_min
+// for the current h, so the core genuinely turns red as t -> 1.
+let LOGTOP = 3.5;
+function recomputeLogTop(){ LOGTOP = Math.max(0.5, Math.log10(Math.pow(TAU_MIN/TAU_ON, -0.5 - h))); }
 function speedColor(logs, out, o){
-  // logs in [0, 3.5] -> blue -> cyan -> white -> orange -> red
-  const x = Math.min(1, Math.max(0, logs/3.5));
+  const x = Math.min(1, Math.max(0, logs/LOGTOP));
   let r,g,b;
   if(x<0.35){ const k=x/0.35; r=0.05+0.1*k; g=0.25+0.6*k; b=0.55+0.45*k; }
   else if(x<0.6){ const k=(x-0.35)/0.25; r=0.15+0.75*k; g=0.85+0.15*k; b=1.0-0.25*k; }
@@ -467,6 +469,7 @@ $("scrub").oninput = e => { const f = e.target.value/1000; t = 1 - TAU_ON*Math.p
 $("hSlide").oninput = e => {
   h = +e.target.value; $("hVal").textContent = h.toFixed(3);
   $("hRegime").textContent = h < 0.01 ? "(theorem regime)" : "(exaggerated)";
+  recomputeLogTop();
   $("tmLog").classList.add("primary"); $("tmLin").classList.remove("primary"); timeMode="log";
 };
 $("forceOn").onchange = e => {
@@ -479,6 +482,7 @@ $("autoCamChk").onchange = e => autoCam = e.target.checked;
 $("btnExplain").onclick = ()=> $("explain").style.display = "block";
 $("closeExplain").onclick = ()=> $("explain").style.display = "none";
 $("tmLog").classList.add("primary");
+recomputeLogTop();
 
 // ---------------- go ----------------
 function loop(){
