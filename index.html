@@ -158,6 +158,12 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 "use strict";
 // ---------------- parameters (paper §3.1) ----------------
@@ -179,10 +185,19 @@ const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 stage.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x04060c);
+scene.background = new THREE.Color(0x030509);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
 camera.position.set(2.6, 1.15, 3.1);
 camera.lookAt(0, 0, 0);
+
+// bloom post-processing (graceful fallback if the CDN modules fail)
+let composer = null;
+try {
+  composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.55, 0.18);
+  composer.addPass(bloom);
+} catch(e) { composer = null; }
 
 // orbit (simple drag) + auto-tracking camera
 let dragging = false, px = 0, py = 0, theta = 0.85, phi = 1.18, camR = 3.4;
@@ -201,6 +216,18 @@ window.addEventListener("mousemove", e=>{
 });
 stage.addEventListener("wheel", e=>{ e.preventDefault(); autoCam = false; $("autoCamChk").checked = false; camR = Math.min(9, Math.max(0.35, camR + e.deltaY*0.003)); placeCamera(); }, {passive:false});
 
+// ---------------- soft glow textures ----------------
+function softDisc(inner, outer){
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(32,32,0, 32,32,32);
+  grad.addColorStop(0, inner); grad.addColorStop(0.35, outer); grad.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = grad; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const dotTex  = softDisc("rgba(255,255,255,1)", "rgba(255,255,255,0.5)");
+const glowTex = softDisc("rgba(255,255,255,0.85)", "rgba(255,255,255,0.22)");
+
 // ---------------- particles ----------------
 const N = 5000;
 const r_ = new Float32Array(N), th_ = new Float32Array(N), z_ = new Float32Array(N);
@@ -218,19 +245,24 @@ for(let i=0;i<N;i++) seedParticle(i);
 const geo = new THREE.BufferGeometry();
 geo.setAttribute("position", new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
 geo.setAttribute("color", new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-const pmat = new THREE.PointsMaterial({size:0.016, vertexColors:true, transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false});
+const pmat = new THREE.PointsMaterial({size:0.034, map:dotTex, alphaMap:dotTex, vertexColors:true, transparent:true, opacity:0.65, blending:THREE.AdditiveBlending, depthWrite:false, sizeAttenuation:true});
 const points = new THREE.Points(geo, pmat);
 scene.add(points);
 
 const sgeo = new THREE.BufferGeometry();
 sgeo.setAttribute("position", new THREE.BufferAttribute(streakPos, 3).setUsage(THREE.DynamicDrawUsage));
 sgeo.setAttribute("color", new THREE.BufferAttribute(streakCol, 3).setUsage(THREE.DynamicDrawUsage));
-const smat = new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false});
+const smat = new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false});
 const streaks = new THREE.LineSegments(sgeo, smat);
 scene.add(streaks);
 
-// core envelope
-const coreMat = new THREE.MeshBasicMaterial({color:0x33aaff, wireframe:true, transparent:true, opacity:0.10});
+// volumetric core glow (soft stretched disc = glowing column)
+const glowMat = new THREE.SpriteMaterial({map:glowTex, transparent:true, opacity:0.4, blending:THREE.AdditiveBlending, depthWrite:false, color:0x3366ff});
+const glow = new THREE.Sprite(glowMat);
+scene.add(glow);
+
+// core envelope (debug aid, subtle by default)
+const coreMat = new THREE.MeshBasicMaterial({color:0x33aaff, wireframe:true, transparent:true, opacity:0.05});
 const core = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2, 20, 4, true), coreMat);
 scene.add(core);
 // pulse annulus
@@ -240,12 +272,12 @@ ann.visible = false;
 scene.add(ann);
 // support box K
 const boxGeo = new THREE.BoxGeometry(2*BOX_R, 2*BOX_Z, 2*BOX_R);
-const box = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo), new THREE.LineBasicMaterial({color:0x8899bb, transparent:true, opacity:0.16}));
+const box = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo), new THREE.LineBasicMaterial({color:0x8899bb, transparent:true, opacity:0.10}));
 scene.add(box);
 // axis hint
 const axis = new THREE.Line(
   new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,-1.4,0), new THREE.Vector3(0,1.4,0)]),
-  new THREE.LineBasicMaterial({color:0x334466, transparent:true, opacity:0.35}));
+  new THREE.LineBasicMaterial({color:0x334466, transparent:true, opacity:0.12}));
 scene.add(axis);
 
 // ---------------- the self-similar velocity field (paper exponents) ----------------
@@ -271,9 +303,9 @@ function recomputeLogTop(){ LOGTOP = Math.max(0.5, Math.log10(Math.pow(TAU_MIN/T
 function speedColor(logs, out, o){
   const x = Math.min(1, Math.max(0, logs/LOGTOP));
   let r,g,b;
-  if(x<0.35){ const k=x/0.35; r=0.05+0.1*k; g=0.25+0.6*k; b=0.55+0.45*k; }
-  else if(x<0.6){ const k=(x-0.35)/0.25; r=0.15+0.75*k; g=0.85+0.15*k; b=1.0-0.25*k; }
-  else { const k=(x-0.6)/0.4; r=0.9+0.1*k; g=1.0-0.65*k; b=0.75-0.6*k; }
+  if(x<0.35){ const k=x/0.35; r=0.05+0.28*k; g=0.25+0.60*k; b=0.70+0.30*k; }        // deep blue -> electric cyan
+  else if(x<0.6){ const k=(x-0.35)/0.25; r=0.33+0.42*k; g=0.85+0.08*k; b=1.0-0.45*k; } // cyan -> bright white-cyan
+  else { const k=(x-0.6)/0.4; r=0.75+0.25*k; g=0.93-0.63*k; b=0.55-0.45*k; }         // white -> deep orange-red
   out[o]=r; out[o+1]=g; out[o+2]=b;
 }
 
@@ -290,6 +322,7 @@ function fmt(v, hot){
 function resize(){
   const w = stage.clientWidth, ht = stage.clientHeight;
   renderer.setSize(w, ht);
+  if(composer) composer.setSize(w, ht);
   camera.aspect = w/ht; camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize); resize();
@@ -321,6 +354,9 @@ function step(dtReal){
   const q = active ? Math.pow(tau/TAU_ON, -0.5 - h) : 1;
   const Rc = active ? R0 * Math.pow(tau/TAU_ON, 0.5) : R0;
   const Lc = active ? L0 * Math.pow(tau/TAU_ON, 0.5 - h) : L0;
+  // point size adapts to keep dot coverage ~3-4 layers over the column cross-section,
+  // so additive color survives instead of saturating to white
+  pmat.size = Math.max(0.0008, Math.min(0.035, Math.sqrt(0.0024*Rc*Lc)));
 
   for(let i=0;i<N;i++){
     let x = r_[i]*Math.cos(th_[i]), zv = z_[i], xx = r_[i]*Math.sin(th_[i]);
@@ -347,8 +383,8 @@ function step(dtReal){
     if(active){
       const F = field(r_[i], Zv, tau);
       spd = Math.sqrt(F.ur*F.ur + F.uth*F.uth + F.uz*F.uz);
-      // streaks: tail = head + physical velocity · k
-      const k = 0.055*Rc/Math.max(F.q,1e-9);
+      // streaks: tail scales with the core so swirl structure stays visible at all times
+      const k = 0.22*Rc/Math.max(F.q,1e-9);
       const ct = Math.cos(th_[i]), st2 = Math.sin(th_[i]);
       const vx = F.ur*ct - F.uth*st2, vy = F.ur*st2 + F.uth*ct, vz = F.uz;
       streakPos[i*6]=X; streakPos[i*6+1]=Zv; streakPos[i*6+2]=Y;
@@ -373,10 +409,18 @@ function step(dtReal){
   box.visible = document.getElementById("showBox").checked;
   streaks.visible = document.getElementById("showStreaks").checked && active;
 
+  // volumetric glow: warms from blue to orange as the collapse heats up
+  const heat = active ? Math.min(1, Math.log10(Math.max(q,1))/LOGTOP) : 0;
+  glow.visible = active;
+  glow.scale.set(Rc*(2.2+heat*1.6), Lc*(3.2+heat*2.2), 1);
+  glowMat.color.setRGB(0.20+0.8*heat, 0.40-0.10*heat, 1.0-0.85*heat);
+  glowMat.opacity = 0.18 + 0.32*heat;
+
   // auto-tracking camera: follow the collapsing core so it fills the frame
   if(autoCam && document.getElementById("autoCamChk").checked){
-    const target = active ? Math.min(3.4, Math.max(0.35, Rc*7.5)) : 3.4;
+    const target = active ? Math.min(3.0, Math.max(0.30, Rc*5.5)) : 3.0;
     camR += (target - camR)*Math.min(1, dtReal*2.2);
+    if(!dragging) theta += dtReal*0.045; // slow cinematic drift
     placeCamera();
   }
 
@@ -401,7 +445,7 @@ function step(dtReal){
   document.getElementById("contradiction").style.display = (active && tau < 2e-3) ? "block" : "none";
 
   drawChart(tau);
-  renderer.render(scene, camera);
+  if(composer) composer.render(); else renderer.render(scene, camera);
 }
 step.tPrev = 0;
 
