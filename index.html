@@ -312,7 +312,7 @@ function step(dtReal){
       t2 = 1 - TAU_MIN;
       if(!step.holding){ step.holding = 0; }
       step.holding += dtReal;
-      if(step.holding > 2.2){ t2 = 0; t = 0; step.holding = 0; }
+      if(step.holding > 2.2){ t2 = 0; t = 0; step.holding = 0; seedAll(); }
     }
     t = t2;
   }
@@ -321,9 +321,6 @@ function step(dtReal){
   const q = active ? Math.pow(tau/TAU_ON, -0.5 - h) : 1;
   const Rc = active ? R0 * Math.pow(tau/TAU_ON, 0.5) : R0;
   const Lc = active ? L0 * Math.pow(tau/TAU_ON, 0.5 - h) : L0;
-
-  const dt = Math.max(1-t, TAU_MIN) && active ? dtReal*0 : 0; // (advected below via sim dt)
-  const dtSim = active ? dtReal*0 : 0;
 
   for(let i=0;i<N;i++){
     let x = r_[i]*Math.cos(th_[i]), zv = z_[i], xx = r_[i]*Math.sin(th_[i]);
